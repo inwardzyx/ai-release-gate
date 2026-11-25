@@ -81,15 +81,28 @@ public class GateJobRepository {
                 detail == null ? null : detail.substring(0, Math.min(detail.length(), 255)), id) == 1;
     }
 
-    /** 需要重投的任务：还没判定、attempts 没用完、且已经 5 秒没动。 */
-    public List<Map<String, Object>> findStale(int maxAttempts, int seconds) {
+    /**
+     * 需要重投的任务，分两类（**必须分开**，否则长任务会被当成卡死）：
+     *
+     * <ul>
+     *   <li><b>QUEUED 且超过 {@code queuedSeconds} 秒</b>：上次提交就没成功（执行器不在/超时），
+     *       5 秒后重投，恢复得快；</li>
+     *   <li><b>RUNNING 且超过 {@code runningSeconds} 秒</b>：已提交但没回调，
+     *       用远大于任务时长的租约（默认 300 秒）兜底 —— 一次真评测要 1~2 分钟，
+     *       租约短了就会把"还在跑"误判成"卡死"，attempts 这个指标也就废了。</li>
+     * </ul>
+     */
+    public List<Map<String, Object>> findStale(int maxAttempts, int queuedSeconds, int runningSeconds) {
         return jdbc.queryForList("""
-                SELECT id, release_id, prompt_key, version, threshold, attempts
+                SELECT id, release_id, prompt_key, version, threshold, attempts, state
                 FROM gate_job
                 WHERE passed IS NULL AND attempts < ?
-                  AND updated_at < NOW(3) - INTERVAL ? SECOND
+                  AND (
+                        (state = 'QUEUED'  AND updated_at < NOW(3) - INTERVAL ? SECOND)
+                     OR (state = 'RUNNING' AND updated_at < NOW(3) - INTERVAL ? SECOND)
+                      )
                 ORDER BY id LIMIT 20
-                """, maxAttempts, seconds);
+                """, maxAttempts, queuedSeconds, runningSeconds);
     }
 
     public List<Map<String, Object>> listByRelease(long releaseId, int limit) {

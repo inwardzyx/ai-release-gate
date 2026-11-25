@@ -60,8 +60,10 @@ public class GateService {
                     threshold);
             log.info("已提交评测 jobId={} releaseId={} threshold={}", jobId, releaseId, threshold);
         } catch (Exception e) {
-            // 任务保持 RUNNING（attempts 已 +1），扫描器会重投
-            log.warn("提交评测失败，等扫描器重投 jobId={} err={}", jobId, e.getMessage());
+            // ★ 提交失败 ⇒ 立刻放回 QUEUED：这样"快速重投"只覆盖"没提交成功"，
+            //   而 RUNNING 可以放心地用长租约（见 GateJobRepository.findStale 的注释）。
+            repo.markQueuedAgain(jobId);
+            log.warn("提交评测失败，已放回 QUEUED 等扫描器重投 jobId={} err={}", jobId, e.getMessage());
         }
     }
 
@@ -95,7 +97,8 @@ public class GateService {
     /** 扫描器：把"卡住"的任务重投（执行器不可达 / 提交途中进程挂了）。 */
     @Scheduled(fixedDelay = 3000)
     public void retryStale() {
-        List<Map<String, Object>> stale = repo.findStale(MAX_ATTEMPTS, 5);
+        // QUEUED 5 秒没动 = 没提交成功；RUNNING 300 秒没动 = 提交成功了但没回调（真评测要 1~2 分钟）
+        List<Map<String, Object>> stale = repo.findStale(MAX_ATTEMPTS, 5, 300);
         for (Map<String, Object> row : stale) {
             long jobId = ((Number) row.get("id")).longValue();
             long releaseId = ((Number) row.get("release_id")).longValue();

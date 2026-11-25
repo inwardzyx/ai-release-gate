@@ -40,6 +40,8 @@ from fastapi import FastAPI, Header
 from pydantic import BaseModel, Field
 
 STUB_SCORE = float(os.environ.get("STUB_SCORE", "0.80"))
+#: 评测实现：`stub`（固定分，验证链路用）| `campus`（真打 campus 的题集）
+EVAL_KIND = os.environ.get("EVAL_KIND", "stub").strip().lower()
 GATE_URL = os.environ.get("GATE_URL", "http://127.0.0.1:8083")
 RUN_SECONDS = float(os.environ.get("EXECUTOR_RUN_SECONDS", "0.4"))
 
@@ -60,15 +62,22 @@ class SubmitRequest(BaseModel):
 def _run(job_id: str, req: SubmitRequest, trace_id: str) -> None:
     """模拟跑一次评测，然后回调。失败只记状态，不重试（重试交给 gate-svc 的扫描器）。"""
     try:
-        time.sleep(RUN_SECONDS)
-        score = STUB_SCORE
+        if EVAL_KIND == "campus":
+            # ★ 真评测：打 campus 的 /chat 跑题集子集，按 gold 条款命中率打分。
+            #   注意它评的是"线上现状"，不是候选版本 —— 详见 evaluator_campus 的模块注释。
+            import evaluator_campus
+
+            score, detail = evaluator_campus.run(job_id, req.promptKey, req.version)
+        else:
+            time.sleep(RUN_SECONDS)
+            score = STUB_SCORE
+            detail = f"stub evaluator (release={req.releaseId}, v={req.version})"
         passed = score >= req.threshold
         with _lock:
             _jobs[job_id]["state"] = "DONE"
             _jobs[job_id]["score"] = score
             _jobs[job_id]["passed"] = passed
-        payload = {"jobId": job_id, "score": score, "passed": passed,
-                   "detail": f"stub evaluator (release={req.releaseId}, v={req.version})"}
+        payload = {"jobId": job_id, "score": score, "passed": passed, "detail": detail}
         print(f"[traceId={trace_id}] callback jobId={job_id} score={score} passed={passed}", flush=True)
         with httpx.Client(timeout=3.0) as c:
             # ★ 回调也要带 traceId：否则 gate 的日志里这次回调是"无主的"
@@ -105,7 +114,18 @@ def job(job_id: str) -> dict[str, Any]:
 
 @app.get("/ping")
 def ping() -> dict[str, str]:
-    return {"service": "eval-executor", "status": "ok", "stubScore": str(STUB_SCORE)}
+    """★ 带上"我跑的是哪个实现 + 代码改于何时"。
+
+    起因：本项目已经三次踩到"端口上还是旧进程在服务"，判据于是跑在旧代码上却显示通过
+    （最典型的一次：判据说"真评测通过"，detail 里却写着 stub）。
+    让 /ping 报出 evalKind 与代码 mtime，判据就能先断言"我确实在和预期的那份代码说话"。
+    """
+    import os.path
+
+    mtime = os.path.getmtime(__file__)
+    return {"service": "eval-executor", "status": "ok",
+            "evalKind": EVAL_KIND, "stubScore": str(STUB_SCORE),
+            "codeMtime": time.strftime("%H:%M:%S", time.localtime(mtime))}
 
 
 
