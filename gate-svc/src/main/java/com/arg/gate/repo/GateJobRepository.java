@@ -92,6 +92,13 @@ public class GateJobRepository {
      *       租约短了就会把"还在跑"误判成"卡死"，attempts 这个指标也就废了。</li>
      * </ul>
      */
+    /** 标成 ERROR（执行器自己报错）：**不动 passed**，保持"未判定"，等扫描器重投。 */
+    public boolean markError(long id, String detail) {
+        return jdbc.update(
+                "UPDATE gate_job SET state='ERROR', detail=? WHERE id=? AND passed IS NULL",
+                detail == null ? null : detail.substring(0, Math.min(detail.length(), 255)), id) == 1;
+    }
+
     public List<Map<String, Object>> findStale(int maxAttempts, int queuedSeconds, int runningSeconds) {
         return jdbc.queryForList("""
                 SELECT id, release_id, prompt_key, version, threshold, attempts, state

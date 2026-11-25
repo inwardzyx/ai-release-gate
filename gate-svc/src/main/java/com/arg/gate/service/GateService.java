@@ -94,6 +94,22 @@ public class GateService {
         return true;
     }
 
+    /**
+     * 处理执行器报错。
+     *
+     * <p>★ 只把任务标成 ERROR，**不写发布结果**：门禁保持"未判定"，扫描器稍后重投。
+     * 把"调用失败"记成"质量不达标"，会让一次网络抖动变成一次发布事故（缺失 ≠ 零）。
+     */
+    public boolean onError(long jobId, String error) {
+        boolean marked = repo.markError(jobId, error);
+        if (marked) {
+            log.warn("执行器报错，任务标记 ERROR 等重投 jobId={} err={}", jobId, error);
+        } else {
+            log.info("任务已判定，忽略这条错误回调 jobId={}", jobId);
+        }
+        return marked;
+    }
+
     /** 扫描器：把"卡住"的任务重投（执行器不可达 / 提交途中进程挂了）。 */
     @Scheduled(fixedDelay = 3000)
     public void retryStale() {

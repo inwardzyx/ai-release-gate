@@ -86,9 +86,21 @@ def _run(job_id: str, req: SubmitRequest, trace_id: str) -> None:
             with _lock:
                 _jobs[job_id]["callbackStatus"] = r.status_code
     except Exception as e:  # noqa: BLE001
+        msg = f"{type(e).__name__}: {e}"
         with _lock:
             _jobs[job_id]["state"] = "ERROR"
-            _jobs[job_id]["error"] = f"{type(e).__name__}: {e}"
+            _jobs[job_id]["error"] = msg
+        # ★ 失败也要回调，但 score/passed 为 null、带 error：
+        #   gate 只会把任务标成 ERROR（不写发布结果），门禁保持"未判定"、扫描器稍后重投。
+        #   绝不把"调用失败"记成"质量不达标" —— 那会把网络问题变成发布事故。
+        try:
+            with httpx.Client(timeout=3.0) as c:
+                c.post(f"{GATE_URL}/api/gate/callback",
+                       json={"jobId": job_id, "score": None, "passed": None, "error": msg},
+                       headers={"X-Request-Id": trace_id})
+        except Exception:  # noqa: BLE001
+            pass
+        return
 
 
 @app.post("/eval/submit", status_code=202)

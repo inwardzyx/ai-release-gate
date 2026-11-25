@@ -47,7 +47,8 @@ public class GateController {
      * <p>★ 必须幂等：同一个 jobId 重复回调（至少一次）只能改一次状态 ——
      * 否则"已回滚"的发布会被再回滚一次，指针就错位了。
      */
-    public record CallbackBody(String jobId, java.math.BigDecimal score, Boolean passed, String detail) {
+    public record CallbackBody(String jobId, java.math.BigDecimal score, Boolean passed,
+                                  String detail, String error) {
     }
 
     @PostMapping("/callback")
@@ -55,6 +56,11 @@ public class GateController {
         long jobId = Long.parseLong(body.jobId());
         boolean passed = Boolean.TRUE.equals(body.passed());
         java.math.BigDecimal score = body.score() == null ? java.math.BigDecimal.ZERO : body.score();
+        if (body.error() != null && !body.error().isBlank()) {
+            // 执行器自己报错（连不上被测系统、题集坏了…）：只标 ERROR，不写发布结果
+            boolean marked = gateService.onError(jobId, body.error());
+            return Map.of("jobId", jobId, "error", true, "marked", marked);
+        }
         boolean changed = gateService.onResult(jobId, score, passed, body.detail());
         return Map.of("jobId", jobId, "changed", changed);
     }

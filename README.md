@@ -333,3 +333,56 @@ python scripts/mutate_tests.py   # 变异测试：把实现改坏，确认测试
 
 **为什么单测跑 H2 而不是 MySQL 容器**：这层 SQL 没用到 MySQL 特有语法；换 Testcontainers
 会让单测从秒级变成几十秒，**单测一慢就没人跑**。真正的 MySQL 行为由端到端判据兜住（投 100 次那条）。
+
+## 2026-11-25 · 接真实系统（回答"这不是 toy"）
+
+平台不再"自己跟自己玩"：它现在**驱动 campus-policy-rag 的答案模板**，并且**拦下过真实回归**。
+
+### 链路
+
+```text
+config-svc 存 prompt 模板（带版本）          campus 每请求按版本取模板
+release-svc 维护生效指针  ──/api/releases/active──▶  campus（不带版本头时走指针）
+executor 评测候选版本  ──X-Config-Version: N──▶  campus（请求级覆盖，不动线上）
+gate 判定 → release-svc 决定「保持 / 自动回滚」
+```
+
+### 判据 12：campus 真的按版本取模板
+
+| 请求 | 结果 |
+|---|---|
+| `X-Config-Version: 2`（基线） | `configVersion=2, source=header`，prompt 167 字符（含"引用要求"） |
+| `X-Config-Version: 3`（变差） | `configVersion=3, source=header`，prompt 93 字符（无引用要求） |
+| 不带头 | `source=pointer`（平台生效版本）或 `source=default`（平台不可达，**降级可见**） |
+
+### 判据 13：发布/回滚真的改变了被发布系统的行为
+
+```text
+起点            campus: configVersion=1  source=default
+发布 v2 灰度100%  → 门禁通过
+再问 campus     campus: configVersion=2  source=pointer   ← 行为变了
+回滚            campus: configVersion=1  source=default   ← 行为改回去了
+```
+
+### 判据 14：门禁拦下真实回归（最关键的一条）
+
+指标换成 **grounding**（答案的 4 字片段里有多少出现在资料原文中）——对 prompt 敏感；
+原来的"gold 条款在 sources 里"只看检索，prompt 改了它不动，判不出候选版本好坏。
+
+| 发布 | 门槛 | 评测分 | 结果 |
+|---|---|---|---|
+| v2 基线 | 0.40 | **0.469** | 通过，指针→v2 |
+| v3 变差 | 0.40 | **0.2601** | **不通过 ⇒ 自动回滚** |
+
+回滚后：`/active` 与 `/api/gray` 仍是 v2，campus 不带版本头仍答 `source=pointer/version=2`
+—— **线上用户没受影响**。
+
+### 这一轮抓到的两个真 bug
+
+1. **评测失败不回调**：执行器连不上被测系统时只改内存状态、不发回调 ⇒ 门禁任务永远停在
+   `RUNNING`（要等 300 秒租约）。改成"失败也回调，但带 `error`、`score/passed` 为 null"：
+   gate 只把任务标 `ERROR`（**不写发布结果**），门禁保持"未判定"等重投。
+   **绝不把"调用失败"记成"质量不达标"** —— 那会把网络问题变成发布事故。
+2. **容器里环境变量名写错**（`EVAL_QUESTIONS` vs 评测器读的 `CAMPUS_QUESTIONS`）⇒
+   题集路径仍是宿主机路径、评测 FileNotFoundError。因为 bug 1 已修，这个错误被如实报到门禁
+   （`job.detail` 里能直接看到路径），不是静默失败。

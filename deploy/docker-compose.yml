@@ -150,7 +150,13 @@ services:
       EVAL_LIMIT: ${EVAL_LIMIT:-20}
       CAMPUS_URL: ${CAMPUS_URL:-http://host.docker.internal:8028}
       GATE_URL: http://gate-svc:8083
+      # ★ 题集在**另一个仓库**（campus-policy-rag），这里只读挂载，不复制：
+      #   复制一份就会有两个真身，改了题库另一处不知道。
+      CAMPUS_QUESTIONS: /data/questions.json
       TZ: Asia/Shanghai
+    volumes:
+      # host path: edit if your checkout lives elsewhere (compose var syntax chokes on drive letters)
+      - D:/_review_rag-cs/evalset/heldout/questions.json:/data/questions.json:ro
     ports:
       - "8084:8084"
     extra_hosts:
