@@ -83,7 +83,11 @@ public class ReleaseController {
         int pct = req.rolloutPct() == null ? 5 : req.rolloutPct();
         java.math.BigDecimal threshold = req.gateThreshold() == null
                 ? new java.math.BigDecimal("0.500") : req.gateThreshold();
-        return repo.canary(id, pct, threshold, req.rev());
+        Release r = repo.canary(id, pct, threshold, req.rev());
+        org.slf4j.LoggerFactory.getLogger(ReleaseController.class).info(
+                "开始灰度 release={} {}@{} -> state={} pct={} 门槛={}",
+                r.id(), r.promptKey(), r.version(), r.state(), r.rolloutPct(), r.gateThreshold());
+        return r;
     }
 
     /**
@@ -97,7 +101,11 @@ public class ReleaseController {
 
     @PostMapping("/releases/{id}/gate-result")
     public Release gateResult(@PathVariable long id, @Valid @RequestBody GateResultRequest req) {
-        return repo.applyGateResult(id, req.score(), req.passed());
+        Release r = repo.applyGateResult(id, req.score(), req.passed());
+        org.slf4j.LoggerFactory.getLogger(ReleaseController.class).info(
+                "门禁结果 release={} score={} passed={} -> state={}",
+                r.id(), r.gateScore(), r.gatePassed(), r.state());
+        return r;
     }
 
     @PostMapping("/releases/{id}/promote")

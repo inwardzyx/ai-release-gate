@@ -50,6 +50,10 @@ public class ConfigVersionController {
 
         ConfigVersionRepository.CreateOutcome out =
                 repo.create(req.promptKey(), req.payload(), req.createdBy(), idemKey);
+        // ★ 成功路径也要留一行：否则"跨服务 trace"在正常请求里根本查不到（只有出错才有日志）
+        org.slf4j.LoggerFactory.getLogger(ConfigVersionController.class).info(
+                "建版本 {}@{} id={} 幂等命中={}", out.version().promptKey(), out.version().version(),
+                out.version().id(), out.idempotentHit());
 
         if (out.idempotentHit()) {
             // 命中幂等：同一个版本已存在，200 而不是 201

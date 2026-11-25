@@ -56,6 +56,7 @@ public class ReleaseClient {
                     HttpRequest.newBuilder(URI.create(base + "/api/releases/" + releaseId + "/gate-result"))
                             .timeout(Duration.ofMillis(2000))
                             .header("Content-Type", "application/json")
+                            .header("X-Request-Id", traceId())
                             .POST(HttpRequest.BodyPublishers.ofString(body)).build(),
                     HttpResponse.BodyHandlers.ofString());
             if (r.statusCode() / 100 != 2) {
@@ -65,4 +66,10 @@ public class ReleaseClient {
             throw new IllegalStateException("回写门禁结果失败：" + e.getMessage(), e);
         }
     }
-}
+
+    /** 当前线程的 traceId（空则给 "-"）：跨服务透传靠它。 */
+    private static String traceId() {
+        String id = org.slf4j.MDC.get("traceId");
+        return id != null ? id : "-";
+    }}
+

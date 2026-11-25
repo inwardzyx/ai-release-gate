@@ -72,6 +72,18 @@ public class GlobalExceptionHandler {
                 .body(ApiError.of("MISSING_PARAM", "缺少参数: " + e.getParameterName(), traceId()));
     }
 
+    /**
+     * 路径不存在 ⇒ 404。
+     * ★ 补这条的原因：catch-all 会把 NoResourceFoundException 当 500 并**打 ERROR 堆栈**，
+     * 于是探测/扫描请求会把日志灌满，真正的 500 反而被淹没。
+     */
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    public ResponseEntity<ApiError> onNoResource(
+            org.springframework.web.servlet.resource.NoResourceFoundException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiError.of("NO_SUCH_PATH", "没有这个接口: " + e.getResourcePath(), traceId()));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiError> onOther(Exception e) {
         log.error("未处理的异常 traceId={}", traceId(), e);

@@ -49,6 +49,7 @@ public class ExecutorClient {
                     HttpRequest.newBuilder(URI.create(base + "/eval/submit"))
                             .timeout(Duration.ofMillis(2000))
                             .header("Content-Type", "application/json")
+                            .header("X-Request-Id", traceId())
                             .POST(HttpRequest.BodyPublishers.ofString(body)).build(),
                     HttpResponse.BodyHandlers.ofString());
             if (r.statusCode() / 100 != 2) {
@@ -58,4 +59,10 @@ public class ExecutorClient {
             throw new IllegalStateException("提交评测失败：" + e.getMessage(), e);
         }
     }
-}
+
+    /** 当前线程的 traceId（空则给 "-"）：跨服务透传靠它。 */
+    private static String traceId() {
+        String id = org.slf4j.MDC.get("traceId");
+        return id != null ? id : "-";
+    }}
+

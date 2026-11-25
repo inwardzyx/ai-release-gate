@@ -36,7 +36,7 @@ import uuid
 from typing import Any
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Header
 from pydantic import BaseModel, Field
 
 STUB_SCORE = float(os.environ.get("STUB_SCORE", "0.80"))
@@ -57,7 +57,7 @@ class SubmitRequest(BaseModel):
     threshold: float = 0.5
 
 
-def _run(job_id: str, req: SubmitRequest) -> None:
+def _run(job_id: str, req: SubmitRequest, trace_id: str) -> None:
     """模拟跑一次评测，然后回调。失败只记状态，不重试（重试交给 gate-svc 的扫描器）。"""
     try:
         time.sleep(RUN_SECONDS)
@@ -69,8 +69,11 @@ def _run(job_id: str, req: SubmitRequest) -> None:
             _jobs[job_id]["passed"] = passed
         payload = {"jobId": job_id, "score": score, "passed": passed,
                    "detail": f"stub evaluator (release={req.releaseId}, v={req.version})"}
+        print(f"[traceId={trace_id}] callback jobId={job_id} score={score} passed={passed}", flush=True)
         with httpx.Client(timeout=3.0) as c:
-            r = c.post(f"{GATE_URL}/api/gate/callback", json=payload)
+            # ★ 回调也要带 traceId：否则 gate 的日志里这次回调是"无主的"
+            r = c.post(f"{GATE_URL}/api/gate/callback", json=payload,
+                       headers={"X-Request-Id": trace_id})
             with _lock:
                 _jobs[job_id]["callbackStatus"] = r.status_code
     except Exception as e:  # noqa: BLE001
@@ -80,15 +83,18 @@ def _run(job_id: str, req: SubmitRequest) -> None:
 
 
 @app.post("/eval/submit", status_code=202)
-def submit(req: SubmitRequest) -> dict[str, Any]:
+def submit(req: SubmitRequest, x_request_id: str | None = Header(default=None)) -> dict[str, Any]:
+    trace_id = x_request_id or "-"
+    # ★ 打一行带 traceId 的日志：判据要能在 4 个进程的日志里都找到同一个 id
+    print(f"[traceId={trace_id}] submit jobId={req.jobId} release={req.releaseId} v={req.version}", flush=True)
     with _lock:
         if req.jobId in _jobs:
             # 幂等：同一个 jobId 重复提交，不重复跑
             return {"jobId": req.jobId, "state": _jobs[req.jobId]["state"], "accepted": False}
         _jobs[req.jobId] = {"jobId": req.jobId, "state": "RUNNING", "releaseId": req.releaseId,
                             "submittedAt": time.time()}
-    threading.Thread(target=_run, args=(req.jobId, req), daemon=True).start()
-    return {"jobId": req.jobId, "state": "RUNNING", "accepted": True}
+    threading.Thread(target=_run, args=(req.jobId, req, trace_id), daemon=True).start()
+    return {"jobId": req.jobId, "state": "RUNNING", "accepted": True, "traceId": trace_id}
 
 
 @app.get("/eval/jobs/{job_id}")
@@ -100,3 +106,6 @@ def job(job_id: str) -> dict[str, Any]:
 @app.get("/ping")
 def ping() -> dict[str, str]:
     return {"service": "eval-executor", "status": "ok", "stubScore": str(STUB_SCORE)}
+
+
+

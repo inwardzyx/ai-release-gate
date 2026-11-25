@@ -118,9 +118,13 @@ public class ReleaseRepository {
         pointTo(cur.env(), cur.promptKey(), id);
         // ★ 同事务写 outbox：发布生效与"门禁该跑了"这件事必须一起成功或一起失败
         String eventId = java.util.UUID.randomUUID().toString();
+        // ★ traceId 必须写进事件：门禁由消息触发，那条链路上没有 HTTP 请求的头可传。
+        //   "trace 跟着请求走"在同步调用里成立，在事件驱动里是错的 —— 它必须跟着**事件**走。
+        String traceId = org.slf4j.MDC.get("traceId");
         String payload = String.format(
-                "{\"releaseId\":%d,\"env\":\"%s\",\"promptKey\":\"%s\",\"version\":%d,\"rolloutPct\":%d}",
-                id, cur.env(), cur.promptKey(), cur.version(), rolloutPct);
+                "{\"releaseId\":%d,\"env\":\"%s\",\"promptKey\":\"%s\",\"version\":%d,\"rolloutPct\":%d,\"traceId\":\"%s\"}",
+                id, cur.env(), cur.promptKey(), cur.version(), rolloutPct,
+                traceId == null ? "-" : traceId);
         jdbc.update("""
                         INSERT INTO outbox_event (event_id, type, payload) VALUES (?, 'RELEASE_CANARY', ?)
                         """,
@@ -253,6 +257,7 @@ public class ReleaseRepository {
         }
     }
 }
+
 
 
 

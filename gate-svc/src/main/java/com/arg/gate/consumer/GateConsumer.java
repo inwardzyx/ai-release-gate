@@ -166,16 +166,25 @@ public class GateConsumer {
             return;
         }
 
-        // 门槛由发布方声明；拿不到就抛 ⇒ 不 ack ⇒ 留在 pending 等重试（不猜默认值）
-        BigDecimal threshold = releaseClient.thresholdOf(releaseId);
+        // ★ 从事件里恢复 traceId：消息是在**别人的请求**里产生的，消费线程自己没有 traceId。
+        //   （同步调用靠请求头传，异步链路只能靠消息体带 —— 这点容易漏，漏了就没法跨服务排查）
+        String traceId = node.path("traceId").asText("-");
+        org.slf4j.MDC.put("traceId", traceId);
+        try {
+            // 门槛由发布方声明；拿不到就抛 ⇒ 不 ack ⇒ 留在 pending 等重试（不猜默认值）
+            BigDecimal threshold = releaseClient.thresholdOf(releaseId);
 
-        Optional<Long> jobId = repo.insertIfAbsent(releaseId, eventId, promptKey, version, threshold);
-        if (jobId.isPresent()) {
-            log.info("建门禁任务 id={} eventId={} releaseId={}", jobId.get(), eventId, releaseId);
-            gateService.dispatch(jobId.get(), releaseId);
-        } else {
-            log.info("事件重复，已幂等跳过 eventId={}", eventId);
+            Optional<Long> jobId = repo.insertIfAbsent(releaseId, eventId, promptKey, version, threshold);
+            if (jobId.isPresent()) {
+                log.info("建门禁任务 id={} eventId={} releaseId={}", jobId.get(), eventId, releaseId);
+                gateService.dispatch(jobId.get(), releaseId);
+            } else {
+                log.info("事件重复，已幂等跳过 eventId={}", eventId);
+            }
+        } finally {
+            org.slf4j.MDC.remove("traceId");   // ★ 消费线程会被复用，不清会把 traceId 带到下一条消息
         }
     }
 }
+
 
