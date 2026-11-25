@@ -2,8 +2,8 @@
 """判据 11：真评测驱动门禁判决（EVAL_KIND=campus）。
 
 两半：
-  (a) 门槛 0.50、真评测给 4/5=0.80 ⇒ 通过，保持 CANARY；
-  (b) 门槛 0.90、同一个 0.80 ⇒ 不通过 ⇒ 自动回滚。
+  (a) 门槛 0.80（实测基线 0.90 − 2 题余量）、真评测给 4/5=0.80 ⇒ 通过，保持 CANARY；
+  (b) 门槛 0.95（高于基线 ⇒ 必挂）、同一个 0.80 ⇒ 不通过 ⇒ 自动回滚。
 
 这条的价值：证明"判决依据不是写死的常量"，而是**真的跑了评测**得到的分数。
 评测时长约 20~40 秒（5 题），所以判据要等得久一点。
@@ -78,11 +78,11 @@ def main() -> int:
     ver = latest["version"]
     print(f"配置版本 = {KEY}@{ver}")
 
-    print("\n== (a) 门槛 0.50：期望真评测分 >= 0.50 ⇒ 通过、保持 CANARY ==")
+    print("\n== (a) 门槛 0.80（实测基线 0.90 − 2 题余量）：期望真评测分（实测 18/20=0.90）>= 0.80 ⇒ 通过、保持 CANARY ==")
     s, A = jcall(RELEASE, "POST", "/api/releases",
                  {"env": ENV, "promptKey": KEY, "version": ver, "operator": "campus"})
     s, A = jcall(RELEASE, "POST", f"/api/releases/{A['id']}/canary",
-                 {"rev": A["rev"], "rolloutPct": 20, "gateThreshold": 0.50})
+                 {"rev": A["rev"], "rolloutPct": 20, "gateThreshold": 0.80})
     relA, secsA = wait_decision(A["id"])
     print(f"  等 {secsA}s 后：passed={relA and relA.get('gatePassed')} "
           f"score={relA and relA.get('gateScore')} state={relA and relA.get('state')}")
@@ -92,11 +92,11 @@ def main() -> int:
     if jobs:
         print(f"  job.detail = {jobs[0].get('detail')}")
 
-    print("\n== (b) 门槛 0.90：同一个真评测分 ⇒ 不通过 ⇒ 自动回滚 ==")
+    print("\n== (b) 门槛 0.95（高于基线 ⇒ 必挂）：同一个真评测分 ⇒ 不通过 ⇒ 自动回滚 ==")
     s, B = jcall(RELEASE, "POST", "/api/releases",
                  {"env": ENV, "promptKey": KEY, "version": ver, "operator": "campus"})
     s, B = jcall(RELEASE, "POST", f"/api/releases/{B['id']}/canary",
-                 {"rev": B["rev"], "rolloutPct": 10, "gateThreshold": 0.90})
+                 {"rev": B["rev"], "rolloutPct": 10, "gateThreshold": 0.95})
     relB, secsB = wait_decision(B["id"])
     print(f"  等 {secsB}s 后：passed={relB and relB.get('gatePassed')} "
           f"score={relB and relB.get('gateScore')} state={relB and relB.get('state')}")
@@ -112,3 +112,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+

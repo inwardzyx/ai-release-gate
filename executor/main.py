@@ -123,9 +123,19 @@ def ping() -> dict[str, str]:
     import os.path
 
     mtime = os.path.getmtime(__file__)
+    eval_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "evaluator_campus.py")
+    eval_mtime = os.path.getmtime(eval_file) if os.path.exists(eval_file) else 0
+    try:
+        import evaluator_campus  # noqa: PLC0415
+
+        limit = evaluator_campus.LIMIT
+    except Exception:
+        limit = -1                                   # 拿不到就写 -1（缺失），不补 0
     return {"service": "eval-executor", "status": "ok",
             "evalKind": EVAL_KIND, "stubScore": str(STUB_SCORE),
-            "codeMtime": time.strftime("%H:%M:%S", time.localtime(mtime))}
+            "evalLimit": str(limit),
+            "codeMtime": time.strftime("%H:%M:%S", time.localtime(mtime)),
+            "evalCodeMtime": time.strftime("%H:%M:%S", time.localtime(eval_mtime))}
 
 
 
