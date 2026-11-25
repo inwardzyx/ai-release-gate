@@ -273,3 +273,36 @@ canary(门槛 0.50) → outbox → Stream → gate 建任务(快照 promptKey@ve
 8084 上一直是旧执行器在服务。这次除了改 `stop_services.py`（原来按路径匹配，**执行器从来没被停掉**），
 还让 `/ping` 报 `evalLimit` 与 `evalCodeMtime`，判据前置断言 `evalKind == campus && evalLimit >= 20`。
 **判据的第一步必须是"我在测我以为的那个东西"。**
+
+## 一条命令起全栈（2026-11-25）
+
+```bash
+mvn -DskipTests package           # 先把三个 jar 打出来（镜像只负责装进 JRE，不重复下载依赖）
+docker compose -f deploy/docker-compose.yml up -d --build
+docker compose -f deploy/docker-compose.yml ps     # 六个容器应全 healthy
+```
+
+实测（空库从头）：
+
+| 容器 | 状态 |
+|---|---|
+| arg-mysql-compose / arg-redis-compose | healthy |
+| arg-config-svc / arg-release-svc / arg-gate-svc | healthy |
+| arg-eval-executor | healthy |
+
+起完直接跑判据：`python scripts/smoke_release.py`（4 条）与 `python scripts/smoke_gate_w3.py`（异步链路）——
+**都在容器里跑通，不是"容器 up 就算成功"**。
+
+几个刻意的选择：
+- **mysql 映射 3308 / redis 映射 6381**：宿主机上已经有开发用的 3307/6380，默认不冲突。
+- **镜像不跑 mvn**：jar 是刚 build 的，镜像只装 JRE + 拷 jar，构建 5 秒且结果可复现。
+- **非 root 运行 + tzdata**：容器里 `USER app`；时区写死 Asia/Shanghai，否则跨服务对日志时间会错位。
+- **healthcheck 用业务接口**（`/api/*/ping`），不是"端口在听"——端口在听的时候 Spring 可能还没就绪。
+- **executor 默认 `EVAL_KIND=stub`**：容器里默认不去连外部被评测系统，否则"一条命令"会因为外部依赖不可达永远不绿。
+  要真评测：`EVAL_KIND=campus CAMPUS_URL=http://host.docker.internal:8028 docker compose ... up -d`。
+
+### 判据脚本在"空库"上崩了一次（已修）
+
+`smoke_release.py` 第 8 步回滚"没有 prev 的发布"时，`/api/gray` 返回 404，body 是错误对象（没有 `releaseId`），
+脚本直接 `KeyError`。**这正是空库才走到的分支**——之前开发库里有历史数据，`prev` 一直非空，从没踩到。
+改成先看状态码、再用 `.get()` 取值。

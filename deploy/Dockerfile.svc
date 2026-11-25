@@ -1,0 +1,24 @@
+# 三个 Java 服务共用一个 Dockerfile：用 ARG 传 jar 路径。
+#
+# ★ 为什么不在镜像里跑 mvn：镜像构建会再去下载一整套依赖（几百 MB、几分钟），
+#   而 jar 在宿主机上刚 build 过。这里只做"把已有 jar 放进一个干净的 JRE 里"，
+#   构建 5 秒、结果可复现（同 jar 同镜像）。
+#   ⇒ 前置条件：`mvn package` 先跑过（compose 的注释里也写了）。
+FROM eclipse-temurin:17-jre-alpine
+
+ARG JAR
+# tzdata：日志时间要和宿主机一致，否则跨服务对时间会错位
+RUN apk add --no-cache tzdata curl && \
+    cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && echo "Asia/Shanghai" > /etc/timezone
+
+WORKDIR /app
+COPY ${JAR} /app/app.jar
+
+# 非 root 运行（容器逃逸的第一步就是拿到 root shell）
+RUN addgroup -S app && adduser -S -G app app && chown -R app:app /app
+USER app
+
+# 优雅停机：让 Spring 收到 SIGTERM（默认 30s 超时内收尾）
+STOPSIGNAL SIGTERM
+
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=70", "-jar", "/app/app.jar"]

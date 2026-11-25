@@ -147,7 +147,7 @@ def main() -> int:
     print(f"  回滚 A: {s} state={json.loads(body).get('state') if s == 200 else body[:80]}"
           f" | A.prev={target}")
     s, gAfter2 = jget(RELEASE, f"/api/gray?env={ENV}&promptKey={KEY}&tenantId={tenant}")
-    got = gAfter2["releaseId"] if gAfter2 else None
+    got = (gAfter2 or {}).get("releaseId")   # 404 时 body 是错误对象，没有 releaseId
     print(f"  回滚后 gray: {s} release={got}（期望 {'404/无' if target is None else target}）")
     ok &= ((s == 404) if target is None else (s == 200 and got == target))
 
@@ -157,6 +157,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
 

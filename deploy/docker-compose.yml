@@ -1,0 +1,170 @@
+# AI 发布门禁平台 · 一条命令起全栈
+#
+#   前置：mvn package（先把三个 jar 打出来，镜像只负责装进 JRE）
+#   启动：docker compose -f deploy/docker-compose.yml up -d --build
+#   冒烟：docker compose -f deploy/docker-compose.yml ps   → 六个容器都 healthy/up
+#         python scripts/smoke_release.py                   → 4 条判据
+#   关闭：docker compose -f deploy/docker-compose.yml down -v
+#
+# ★ 为什么 mysql 映射 3308 而不是 3307：宿主机上已经有一个 arg-mysql 占着 3307（本地开发用）。
+#   把端口固定成"宿主机开发库那个"会让两套环境互相踩 —— 默认不冲突，需要时用 .env 覆盖。
+
+name: ai-release-gate
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: arg-mysql-compose
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-arg_root_2026}
+      MYSQL_USER: arg
+      MYSQL_PASSWORD: ${DB_PASSWORD:-arg_dev_2026}
+      MYSQL_DATABASE: arg_config
+      TZ: Asia/Shanghai
+    ports:
+      - "${MYSQL_HOST_PORT:-3308}:3306"
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+      - arg-mysql-data:/var/lib/mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_0900_ai_ci
+    healthcheck:
+      # ★ 用 mysqladmin ping 而不是 nc：mysql 的 ready 与"端口在听"不是一回事
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    container_name: arg-redis-compose
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_HOST_PORT:-6381}:6379"
+    volumes:
+      - arg-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  config-svc:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.svc
+      args:
+        JAR: config-svc/target/config-svc-0.1.0-SNAPSHOT.jar
+    container_name: arg-config-svc
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: arg
+      DB_PASSWORD: ${DB_PASSWORD:-arg_dev_2026}
+      TZ: Asia/Shanghai
+    ports:
+      - "8081:8081"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8081/api/config/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+
+  release-svc:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.svc
+      args:
+        JAR: release-svc/target/release-svc-0.1.0-SNAPSHOT.jar
+    container_name: arg-release-svc
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: arg
+      DB_PASSWORD: ${DB_PASSWORD:-arg_dev_2026}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CONFIG_SVC_URL: http://config-svc:8081
+      TZ: Asia/Shanghai
+    ports:
+      - "8082:8082"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      config-svc:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8082/api/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+
+  gate-svc:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.svc
+      args:
+        JAR: gate-svc/target/gate-svc-0.1.0-SNAPSHOT.jar
+    container_name: arg-gate-svc
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: arg
+      DB_PASSWORD: ${DB_PASSWORD:-arg_dev_2026}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      RELEASE_SVC_URL: http://release-svc:8082
+      EXECUTOR_URL: http://executor:8084
+      TZ: Asia/Shanghai
+    ports:
+      - "8083:8083"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      release-svc:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8083/api/gate/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+
+  executor:
+    build:
+      context: ../executor
+    container_name: arg-eval-executor
+    environment:
+      # ★ 默认 stub：容器里默认不去连外部被评测系统（campus），否则"一条命令起全栈"会因为
+      #   外部依赖不可达而永远不绿。要真评测就设 EVAL_KIND=campus 并给 CAMPUS_URL。
+      EVAL_KIND: ${EVAL_KIND:-stub}
+      EVAL_LIMIT: ${EVAL_LIMIT:-20}
+      CAMPUS_URL: ${CAMPUS_URL:-http://host.docker.internal:8028}
+      GATE_URL: http://gate-svc:8083
+      TZ: Asia/Shanghai
+    ports:
+      - "8084:8084"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      gate-svc:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8084/ping',timeout=2)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  arg-mysql-data:
+  arg-redis-data:
