@@ -17,9 +17,14 @@ from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-ROOT = Path(r"D:\ai-release-gate")
-MVN = r"D:\tools\apache-maven-3.9.16\bin\mvn.cmd"
-ENV_JAVA = r"D:\tools\jdk-25.0.5+8"
+# ★ 可移植：本机（Windows）走绝对路径，CI（ubuntu）走 PATH 里的 mvn。
+#   写死绝对路径会让这份判据在 CI 上永远跑不起来 —— 而"跑不起来"会被当成"通过"。
+import os
+import shutil
+
+ROOT = Path(__file__).resolve().parents[1]
+MVN = shutil.which("mvn") or shutil.which("mvn.cmd") or r"D:\tools\apache-maven-3.9.16\bin\mvn.cmd"
+ENV_JAVA = os.environ.get("JAVA_HOME") or r"D:\tools\jdk-25.0.5+8"
 
 MUTATIONS = [
     {
@@ -50,11 +55,11 @@ MUTATIONS = [
 
 
 def run_test(module: str) -> tuple[bool, str]:
-    env = {
-        "JAVA_HOME": ENV_JAVA,
-        "Path": rf"{ENV_JAVA}\bin;D:\tools\apache-maven-3.9.16\bin;" + __import__("os").environ["Path"],
-        "MAVEN_OPTS": "-Xmx1g",
-    }
+    # ★ 用继承自父进程的环境 + 覆盖 JAVA_HOME：Windows 用 Path、Linux 用 PATH，
+    #   硬编码其中一个会让另一侧直接失败。
+    env = dict(os.environ)
+    env["JAVA_HOME"] = ENV_JAVA
+    env["MAVEN_OPTS"] = "-Xmx1g"
     p = subprocess.run(
         [MVN, "-B", "-ntp", "-pl", module, "-am", "test"],
         cwd=str(ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, timeout=900)
