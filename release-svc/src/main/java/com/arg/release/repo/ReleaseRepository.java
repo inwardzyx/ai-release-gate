@@ -225,6 +225,24 @@ public class ReleaseRepository {
                 mapper, env, promptKey, limit);
     }
 
+    /**
+     * 当前生效的发布（指针指向的那条）。
+     *
+     * <p>为什么不复用 {@code /api/gray}：那个回答"某个租户该走哪版"（要看灰度分桶），
+     * 而这里回答"这个 key 现在生效的是哪一版"——被发布系统（campus）需要的是后者。
+     */
+    public Optional<Release> findActive(String env, String promptKey) {
+        // ★ 不能复用 COLS：那里的列名未限定，join 之后 env/prompt_key 在两张表里都有 ⇒ ambiguous
+        return jdbc.query("""
+                SELECT r.id, r.env, r.prompt_key, r.version, r.state, r.rollout_pct,
+                       r.prev_release_id, r.rev, r.gate_threshold, r.gate_score, r.gate_passed,
+                       r.operator, r.created_at, r.updated_at
+                FROM `release` r
+                JOIN current_release c ON c.release_id = r.id
+                WHERE c.env = ? AND c.prompt_key = ?
+                """, mapper, env, promptKey).stream().findFirst();
+    }
+
     public Optional<Long> currentReleaseId(String env, String promptKey) {
         return jdbc.query("SELECT release_id FROM current_release WHERE env=? AND prompt_key=?",
                         (rs, i) -> rs.getLong(1), env, promptKey)

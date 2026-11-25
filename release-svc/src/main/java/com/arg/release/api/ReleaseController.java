@@ -91,6 +91,23 @@ public class ReleaseController {
     }
 
     /**
+     * 当前生效的版本 —— 给被发布系统（campus）轮询用。
+     *
+     * <p>★ 语义边界：这是"指针"，不是"灰度决策"。灰度期间不同租户可能走不同版本，
+     * 所以被发布系统若要做真正的按租户生效，应该用 {@code /api/gray}；
+     * 这个端点给的是"平台当前的生效版本"，够 campus 这种单租户演示用。
+     */
+    @GetMapping("/releases/active")
+    public ResponseEntity<?> active(@RequestParam(defaultValue = "prod") String env,
+                                    @RequestParam String promptKey) {
+        return repo.findActive(env, promptKey)
+                .<ResponseEntity<?>>map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.status(404).body(java.util.Map.of(
+                        "code", "NO_ACTIVE_RELEASE",
+                        "message", "这个 key 还没有生效版本: " + env + "/" + promptKey)));
+    }
+
+    /**
      * 门禁结果回调（由 gate-svc 调用）。
      *
      * <p>★ 语义：<b>不通过就自动回滚</b>。通过了保持 CANARY，等人决定是否放量 ——
