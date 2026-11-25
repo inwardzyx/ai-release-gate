@@ -4,7 +4,7 @@
 > **可门禁、可灰度、可回滚、可审计**的发布。
 > 业务是 AI，技术是后端：服务拆分、幂等、发号器、乐观锁、状态机、消息、超时预算。
 
-**当前进度：W2 完成**（config-svc + release-svc + gate-svc + outbox/Redis Streams；5 条判据全绿）。
+**当前进度：W3 闭环**（config + release + gate + Python 执行器；8 条判据全绿）。门禁判定通过就留在 CANARY、不通过**自动回滚**。
 
 ---
 
@@ -31,7 +31,8 @@ D:\Python-project\.venv\Scripts\python.exe scripts\smoke_config.py
 |---|---|---|---|
 | config-svc | 8081 | `arg_config` | ✅ W1 完成 |
 | release-svc | 8082 | `arg_release` | ✅ W1 完成 |
-| gate-svc | 8083 | `arg_gate` | ✅ W2 完成 |
+| gate-svc | 8083 | `arg_gate` | ✅ W2/W3 完成 |
+| eval-executor（Python） | 8084 | — | ✅ W3（**stub 评分**，真实 105 题待接） |
 | eval-executor（Python） | — | — | ⏳ W3 |
 
 ---
@@ -63,6 +64,9 @@ D:\Python-project\.venv\Scripts\python.exe scripts\smoke_config.py
 | 4a | canary 一个发布 ⇒ 恰好 1 个门禁任务 | ✅ 通过 |
 | 4b | 同一 eventId 手工投 **100 次** ⇒ 仍只有 **1** 个任务 | ✅ 通过 |
 | 4c | 消费完 pending = 0（每条都 ack 了） | ✅ 通过 |
+| 5 | 门禁不通过 ⇒ **自动回滚**，/api/gray 立刻回到上一版 | ✅ 通过（B 门槛 0.9 > stub 0.8 ⇒ 回滚到 A） |
+| 6 | 同一 job 重复回调 3 次 ⇒ 状态只变一次 | ✅ 通过（changed=false × 3，B 的 rev 不变） |
+| 7 | 门禁通过 ⇒ 保持 CANARY、gatePassed=true（可人工放量） | ✅ 通过 |
 
 ---
 
@@ -131,3 +135,35 @@ outbox 把"写业务"和"记事件"合成一个事务，投递失败下一轮再
 2. **`mvn -pl gate-svc` 单独构建会缺 common**：兄弟模块要先在反应堆里装好（`-am` 或整体构建）。
 3. **构建时 jar 被正在运行的服务占着** → `repackage` 报 "Unable to rename"。
    跑服务期间改代码必须先停进程（这条在 policy-desk 也踩过，属于 Windows 特有）。
+
+
+### 2026-11-25 · W3：闭环（门禁判定 + 自动回滚 + 回调幂等）
+
+**链路全通了**：
+
+```text
+canary(门槛 0.50) → outbox → Stream → gate 建任务(快照 promptKey@version)
+   → 提交 Python 执行器（202，不等结果）→ 执行器跑完回调
+   → gate 写结果（幂等：只在"未判定"时生效）→ release-svc 判定
+        ├─ 通过  → 保持 CANARY，等人放量（自动放量不该由门禁决定）
+        └─ 不通过 → **自动回滚**（指针切回 prev）
+```
+
+实测（`scripts/smoke_gate_w3.py`）：
+
+| 判据 | 实测 |
+|---|---|
+| 5 自动回滚 | B 门槛 0.90 > stub 0.80 ⇒ `state=ROLLED_BACK`，`/api/gray` 回到 A |
+| 6 回调幂等 | 同一 job 回调 3 次，`changed=false` × 3；B 的 rev 保持不变（没被二次回滚） |
+| 7 通过路径 | C 门槛 0.50 ⇒ 保持 `CANARY`、`gatePassed=true` |
+
+**★ 诚实标注**：执行器现在的评分是 **stub（固定 0.80）**，只验证管道；
+真实评测（接 campus 的 105 题 + McNemar）是下一步，接口已定成"给 jobId 交分数"，换实现不动调用方。
+
+**三个坑**：
+1. **Redis `XGROUP CREATE` 在 stream 不存在时失败**（Spring Data Redis 的 `createGroup` 不带 MKSTREAM）⇒
+   先写一条占位消息建出 stream、建完组再删掉。否则"服务先起、发布后起"这种最正常的顺序下消费组根本建不出来。
+2. **MySQL 没有 `ADD COLUMN IF NOT EXISTS`**，而把 `ALTER` 写进 `schema.sql` 会在**第二次启动**时报重复列 ⇒
+   新列必须直接写进 `CREATE TABLE`。
+3. **执行器是独立进程**：服务全绿 ≠ 端到端通。第一次跑判据时 gate 提交到 8084 超时，日志里才有线索 ——
+   "每个服务都能 ping 通"不等于"链路能跑"。

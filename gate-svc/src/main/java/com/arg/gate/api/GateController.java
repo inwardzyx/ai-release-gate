@@ -1,6 +1,7 @@
 package com.arg.gate.api;
 
 import com.arg.gate.consumer.GateConsumer;
+import com.arg.gate.service.GateService;
 import com.arg.gate.repo.GateJobRepository;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -25,16 +26,37 @@ import java.util.Map;
 public class GateController {
 
     private final GateConsumer consumer;
+    private final GateService gateService;
     private final GateJobRepository repo;
     private final StringRedisTemplate redis;
     private final String stream;
 
-    public GateController(GateConsumer consumer, GateJobRepository repo, StringRedisTemplate redis,
+    public GateController(GateConsumer consumer, GateService gateService, GateJobRepository repo,
+                          StringRedisTemplate redis,
                           @org.springframework.beans.factory.annotation.Value("${arg.stream.release-events}") String stream) {
         this.consumer = consumer;
+        this.gateService = gateService;
         this.repo = repo;
         this.redis = redis;
         this.stream = stream;
+    }
+
+    /**
+     * 执行器的回调入口。
+     *
+     * <p>★ 必须幂等：同一个 jobId 重复回调（至少一次）只能改一次状态 ——
+     * 否则"已回滚"的发布会被再回滚一次，指针就错位了。
+     */
+    public record CallbackBody(String jobId, java.math.BigDecimal score, Boolean passed, String detail) {
+    }
+
+    @PostMapping("/callback")
+    public Map<String, Object> callback(@org.springframework.web.bind.annotation.RequestBody CallbackBody body) {
+        long jobId = Long.parseLong(body.jobId());
+        boolean passed = Boolean.TRUE.equals(body.passed());
+        java.math.BigDecimal score = body.score() == null ? java.math.BigDecimal.ZERO : body.score();
+        boolean changed = gateService.onResult(jobId, score, passed, body.detail());
+        return Map.of("jobId", jobId, "changed", changed);
     }
 
     @PostMapping("/consume")
@@ -71,4 +93,5 @@ public class GateController {
         return Map.of("service", "gate-svc", "status", "ok");
     }
 }
+
 

@@ -8,10 +8,20 @@ CREATE TABLE IF NOT EXISTS gate_job (
     id         BIGINT      NOT NULL AUTO_INCREMENT,
     release_id BIGINT      NOT NULL,
     event_id   VARCHAR(64) NOT NULL,
+    -- ★ 快照：任务建的那一刻，配置版本可能之后又变了；门禁必须评"当时那版"
+    prompt_key VARCHAR(64) NOT NULL,
+    version    INT         NOT NULL,
     state      VARCHAR(16) NOT NULL DEFAULT 'QUEUED',   -- QUEUED / RUNNING / PASS / FAIL / DEAD
     attempts   INT         NOT NULL DEFAULT 0,
+    threshold  DECIMAL(4,3) NOT NULL DEFAULT 0.500,   -- 建任务时从发布记录带过来
+    score      DECIMAL(6,4) NULL,                      -- 门禁分；NULL = 还没跑完（缺失不是 0）
+    passed     TINYINT(1)   NULL,                      -- NULL = 还没判定
+    detail     VARCHAR(255) NULL,
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     PRIMARY KEY (id),
     UNIQUE KEY uk_event (event_id),
     KEY idx_release (release_id, id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci;
+
+

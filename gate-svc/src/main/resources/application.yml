@@ -27,6 +27,10 @@ spring:
       timeout: 800ms
 
 arg:
+  release-svc:
+    base-url: ${RELEASE_SVC_URL:http://127.0.0.1:8082}
+  executor:
+    base-url: ${EXECUTOR_URL:http://127.0.0.1:8084}
   stream:
     release-events: ${RELEASE_EVENTS_STREAM:arg:releases}
     group: ${STREAM_GROUP:gate}
@@ -37,3 +41,4 @@ logging:
     level: "%5p [traceId=%X{traceId:-}]"
   level:
     com.arg: INFO
+

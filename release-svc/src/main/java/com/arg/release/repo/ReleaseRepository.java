@@ -32,7 +32,7 @@ public class ReleaseRepository {
 
     private static final String COLS = """
             SELECT id, env, prompt_key, version, state, rollout_pct, prev_release_id, rev,
-                   operator, created_at, updated_at
+                   gate_threshold, gate_score, gate_passed, operator, created_at, updated_at
             FROM `release`
             """;
 
@@ -47,6 +47,9 @@ public class ReleaseRepository {
             rs.getInt("rollout_pct"),
             (Long) rs.getObject("prev_release_id"),
             rs.getInt("rev"),
+            rs.getBigDecimal("gate_threshold"),
+            rs.getBigDecimal("gate_score"),
+            (Boolean) rs.getObject("gate_passed"),
             rs.getString("operator"),
             rs.getTimestamp("created_at").toLocalDateTime(),
             rs.getTimestamp("updated_at").toLocalDateTime());
@@ -94,7 +97,7 @@ public class ReleaseRepository {
      * @throws IllegalStateException   状态不允许
      */
     @Transactional
-    public Release canary(long id, int rolloutPct, int expectedRev) {
+    public Release canary(long id, int rolloutPct, java.math.BigDecimal gateThreshold, int expectedRev) {
         Release cur = findById(id).orElseThrow(() -> new NotFoundException(id));
         if (expectedRev != cur.rev()) {
             throw new OptimisticLockException(id, expectedRev, cur.rev());
@@ -103,10 +106,10 @@ public class ReleaseRepository {
             throw new IllegalStateException("只有 PENDING 的发布能开始灰度，当前是 " + cur.state());
         }
         int rows = jdbc.update("""
-                        UPDATE `release` SET state='CANARY', rollout_pct=?, rev=rev+1
+                        UPDATE `release` SET state='CANARY', rollout_pct=?, gate_threshold=?, rev=rev+1
                          WHERE id=? AND rev=? AND state='PENDING'
                         """,
-                rolloutPct, id, expectedRev);
+                rolloutPct, gateThreshold, id, expectedRev);
         if (rows == 0) {
             // 竞态：读完到现在，别人改了（这里再报 409，不能"乐观地当成功"）
             Release now = findById(id).orElseThrow(() -> new NotFoundException(id));
@@ -180,6 +183,31 @@ public class ReleaseRepository {
         return findById(id).orElseThrow();
     }
 
+    /**
+     * 回写门禁结果。<b>不通过就自动回滚</b>。
+     *
+     * <p>★ 幂等：已经判定过的发布再来一次结果，直接返回当前状态，不重复回滚。
+     * 理由：回调可能重复（至少一次），而"重复回滚"会把指针再往前推一格 —— 那是数据损坏。
+     *
+     * <p>★ 为什么自动回滚放在 release-svc 而不是 gate-svc：
+     * 状态机只能有一个写者。gate-svc 通过 HTTP 告诉 release-svc "这版没过"，
+     * 由 release-svc 自己执行回滚 —— 这样"谁改状态"永远只有一处。
+     */
+    @Transactional
+    public Release applyGateResult(long id, java.math.BigDecimal score, boolean passed) {
+        Release cur = findById(id).orElseThrow(() -> new NotFoundException(id));
+        if (cur.gatePassed() != null) {
+            return cur;                     // 已判定过：幂等返回
+        }
+        jdbc.update("UPDATE `release` SET gate_score=?, gate_passed=? WHERE id=?",
+                score, passed ? 1 : 0, id);
+        if (passed) {
+            return findById(id).orElseThrow();   // 通过：保持 CANARY，等人放量
+        }
+        // 不通过 ⇒ 自动回滚（状态机 + 指针都在同一个事务里）
+        return rollback(id, cur.rev());
+    }
+
     public Optional<Release> findById(long id) {
         return jdbc.query(COLS + " WHERE id = ?", mapper, id).stream().findFirst();
     }
@@ -225,4 +253,6 @@ public class ReleaseRepository {
         }
     }
 }
+
+
 

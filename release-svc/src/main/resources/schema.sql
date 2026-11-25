@@ -15,6 +15,10 @@ CREATE TABLE IF NOT EXISTS `release` (
     rollout_pct     TINYINT      NOT NULL DEFAULT 0,
     prev_release_id BIGINT       NULL,              -- 回滚目标（本次发布前生效的那个）
     rev             INT          NOT NULL DEFAULT 0,-- ★ 乐观锁
+    -- 门禁标准差与结果：阈值由**发布方自己声明**（改 prompt 与换模型的风险不同），结果由门禁回写
+    gate_threshold  DECIMAL(4,3) NOT NULL DEFAULT 0.500,
+    gate_score      DECIMAL(6,4) NULL,
+    gate_passed     TINYINT(1)   NULL,
     idempotency_key VARCHAR(120) NULL,
     operator        VARCHAR(64)  NOT NULL,
     created_at      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -50,3 +54,4 @@ CREATE TABLE IF NOT EXISTS outbox_event (
     UNIQUE KEY uk_event (event_id),
     KEY idx_state (state, id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci;
+

@@ -74,13 +74,30 @@ public class ReleaseController {
 
     // ---------------------------------------------------------------- 状态迁移
 
-    public record ChangeRequest(@NotNull Integer rev, @Min(1) @Max(100) Integer rolloutPct) {
+    public record ChangeRequest(@NotNull Integer rev, @Min(1) @Max(100) Integer rolloutPct,
+                                java.math.BigDecimal gateThreshold) {
     }
 
     @PostMapping("/releases/{id}/canary")
     public Release canary(@PathVariable long id, @Valid @RequestBody ChangeRequest req) {
         int pct = req.rolloutPct() == null ? 5 : req.rolloutPct();
-        return repo.canary(id, pct, req.rev());
+        java.math.BigDecimal threshold = req.gateThreshold() == null
+                ? new java.math.BigDecimal("0.500") : req.gateThreshold();
+        return repo.canary(id, pct, threshold, req.rev());
+    }
+
+    /**
+     * 门禁结果回调（由 gate-svc 调用）。
+     *
+     * <p>★ 语义：<b>不通过就自动回滚</b>。通过了保持 CANARY，等人决定是否放量 ——
+     * "自动放量"不应该由门禁做：门禁回答"这版够不够好"，放量是业务决定。
+     */
+    public record GateResultRequest(@NotNull java.math.BigDecimal score, @NotNull Boolean passed) {
+    }
+
+    @PostMapping("/releases/{id}/gate-result")
+    public Release gateResult(@PathVariable long id, @Valid @RequestBody GateResultRequest req) {
+        return repo.applyGateResult(id, req.score(), req.passed());
     }
 
     @PostMapping("/releases/{id}/promote")
@@ -144,3 +161,4 @@ public class ReleaseController {
         return Map.of("service", "release-svc", "status", "ok");
     }
 }
+
