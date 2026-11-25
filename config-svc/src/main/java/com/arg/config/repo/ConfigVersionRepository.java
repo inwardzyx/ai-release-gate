@@ -123,6 +123,11 @@ public class ConfigVersionRepository {
                 .stream().findFirst();
     }
 
+    public Optional<ConfigVersion> findByVersion(String promptKey, int version) {
+        return jdbc.query(SELECT_COLS + " WHERE prompt_key = ? AND version = ?", mapper, promptKey, version)
+                .stream().findFirst();
+    }
+
     public List<ConfigVersion> list(String promptKey, int limit) {
         return jdbc.query(SELECT_COLS + " WHERE prompt_key = ? ORDER BY version DESC LIMIT ?",
                 mapper, promptKey, limit);
@@ -141,3 +146,4 @@ public class ConfigVersionRepository {
     public record CreateOutcome(ConfigVersion version, boolean idempotentHit) {
     }
 }
+

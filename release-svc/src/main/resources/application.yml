@@ -1,0 +1,36 @@
+server:
+  port: ${SERVER_PORT:8082}
+
+spring:
+  application:
+    name: release-svc
+
+  datasource:
+    url: jdbc:mysql://${DB_HOST:127.0.0.1}:${DB_PORT:3307}/arg_release?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${DB_USER:arg}
+    password: ${DB_PASSWORD:arg_dev_2026}
+    hikari:
+      # 发布是低频写，连接池不用大；留资源给读路径（config-svc）
+      maximum-pool-size: 6
+      minimum-idle: 1
+      pool-name: release-svc-pool
+
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+      continue-on-error: false
+
+  jackson:
+    default-property-inclusion: non_null
+
+arg:
+  config-svc:
+    # ★ 本机跑时是 127.0.0.1:8081；docker compose 里改成 http://config-svc:8081
+    base-url: ${CONFIG_SVC_URL:http://127.0.0.1:8081}
+
+logging:
+  pattern:
+    level: "%5p [traceId=%X{traceId:-}]"
+  level:
+    com.arg: INFO

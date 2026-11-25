@@ -5,6 +5,7 @@ import com.arg.config.repo.ConfigVersionRepository;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -65,6 +66,12 @@ public class ConfigVersionController {
         return repo.list(promptKey, Math.max(1, Math.min(limit, MAX_LIMIT)));
     }
 
+    @GetMapping("/versions/{promptKey}/{version}")
+    public ConfigVersion byVersion(@PathVariable String promptKey, @PathVariable int version) {
+        return repo.findByVersion(promptKey, version)
+                .orElseThrow(() -> new VersionNotFoundException(promptKey + "@" + version));
+    }
+
     @GetMapping("/versions/latest")
     public ConfigVersion latest(@RequestParam String promptKey) {
         // 查不到就抛：错误体由 GlobalExceptionHandler 统一成 ApiError（只有一个出口）
@@ -77,4 +84,5 @@ public class ConfigVersionController {
         return Map.of("service", "config-svc", "status", "ok");
     }
 }
+
 
