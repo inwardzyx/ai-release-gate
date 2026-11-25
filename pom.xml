@@ -30,6 +30,7 @@
     <module>common</module>
     <module>config-svc</module>
     <module>release-svc</module>
+    <module>gate-svc</module>
   </modules>
 
   <properties>
@@ -38,4 +39,5 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
 </project>
+
 

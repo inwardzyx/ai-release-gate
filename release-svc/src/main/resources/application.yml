@@ -24,7 +24,15 @@ spring:
   jackson:
     default-property-inclusion: non_null
 
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6380}
+      timeout: 800ms
+
 arg:
+  stream:
+    release-events: ${RELEASE_EVENTS_STREAM:arg:releases}
   config-svc:
     # ★ 本机跑时是 127.0.0.1:8081；docker compose 里改成 http://config-svc:8081
     base-url: ${CONFIG_SVC_URL:http://127.0.0.1:8081}
@@ -34,3 +42,4 @@ logging:
     level: "%5p [traceId=%X{traceId:-}]"
   level:
     com.arg: INFO
+

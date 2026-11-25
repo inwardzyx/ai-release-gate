@@ -14,9 +14,11 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * 混在一个服务里，发布时的事务会锁住读路径的连接池，读高峰时发布会把整个问答拖慢。
  */
 @SpringBootApplication
+@org.springframework.scheduling.annotation.EnableScheduling
 public class ReleaseSvcApplication {
 
     public static void main(String[] args) {
         SpringApplication.run(ReleaseSvcApplication.class, args);
     }
 }
+

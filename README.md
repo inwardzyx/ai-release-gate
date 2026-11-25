@@ -4,7 +4,7 @@
 > **可门禁、可灰度、可回滚、可审计**的发布。
 > 业务是 AI，技术是后端：服务拆分、幂等、发号器、乐观锁、状态机、消息、超时预算。
 
-**当前进度：W1 完成**（config-svc + release-svc + 灰度分流，4 条判据全绿）。
+**当前进度：W2 完成**（config-svc + release-svc + gate-svc + outbox/Redis Streams；5 条判据全绿）。
 
 ---
 
@@ -31,7 +31,7 @@ D:\Python-project\.venv\Scripts\python.exe scripts\smoke_config.py
 |---|---|---|---|
 | config-svc | 8081 | `arg_config` | ✅ W1 完成 |
 | release-svc | 8082 | `arg_release` | ✅ W1 完成 |
-| gate-svc | 8083 | `arg_release`（独立表） | ⏳ W2（下一块） |
+| gate-svc | 8083 | `arg_gate` | ✅ W2 完成 |
 | eval-executor（Python） | — | — | ⏳ W3 |
 
 ---
@@ -60,7 +60,9 @@ D:\Python-project\.venv\Scripts\python.exe scripts\smoke_config.py
 | 3b | 桶号与**独立实现**（Python 版 SHA-256）20 个租户逐个一致 | ✅ 通过 |
 | 3c | 过期 rev 改状态 ⇒ 409 CONCURRENT_MODIFICATION | ✅ 通过 |
 | 3d | 回滚 = 指针切换：B 回滚后 gray 立刻回到 A | ✅ 通过 |
-| 4 | 重复消息 100 次 ⇒ 门禁任务只跑一次 | ⏳ W2 |
+| 4a | canary 一个发布 ⇒ 恰好 1 个门禁任务 | ✅ 通过 |
+| 4b | 同一 eventId 手工投 **100 次** ⇒ 仍只有 **1** 个任务 | ✅ 通过 |
+| 4c | 消费完 pending = 0（每条都 ack 了） | ✅ 通过 |
 
 ---
 
@@ -102,3 +104,30 @@ D:\Python-project\.venv\Scripts\python.exe scripts\smoke_config.py
 
 **另外**：这一条连"红"本身都依赖数据库当前状态 —— 同一个脚本连跑两次，`prev` 指向会变。
 所以判据要么自己造干净状态，要么显式读取真实 `prev` 再断言（现在选后者）。
+
+
+### 2026-11-25 · W2：至少一次投递 + 消费幂等（判据 4 全绿）
+
+**链路**：`canary` 在同一事务里写 `outbox_event` → `OutboxPublisher`（每 300ms 扫表）投到 Redis Stream → `gate-svc` 消费组读取 → 幂等建 `gate_job` → ack。
+
+| 判据 | 实测 |
+|---|---|
+| 4a 正常路径 | 一次 canary ⇒ 该发布**恰好 1** 个门禁任务 |
+| 4b 重复投递 | 同一 `eventId` **手工投 100 次** ⇒ 该 eventId 仍只有 **1** 个任务（`uk_event` 挡掉 99 次） |
+| 4c 可观测 | 消费完 `pending = 0`（每条都 ack 了） |
+
+**为什么用 outbox 而不是"写完直接 XADD"**：
+直接 XADD 有两个窗口 —— 事务回滚但消息已发（幽灵事件）、事务提交但进程崩了（丢事件）。
+outbox 把"写业务"和"记事件"合成一个事务，投递失败下一轮再试，语义变成**至少一次**；
+重复由消费端的唯一索引去掉。**"恰好一次"不是靠消息系统，是靠业务表的唯一约束。**
+
+**ack 顺序**：必须"处理成功 → ack"。反过来（先 ack 后处理）在处理失败时消息就永久丢了；
+而"处理成功但没 ack"的最坏结果只是重复投递 —— 被唯一索引挡住。两害相权。
+
+### 2026-11-25 · W2 踩的坑
+
+1. **Spring Data Redis 的 API 和我想的不一样**：手动 ack 用 `StreamReadOptions.empty().noack()`，
+   不是 `autoAcknowledge(false)`（该方法无参）；`StreamReadRequest` 属于监听容器那套，不适用于 `opsForStream().read(...)`。
+2. **`mvn -pl gate-svc` 单独构建会缺 common**：兄弟模块要先在反应堆里装好（`-am` 或整体构建）。
+3. **构建时 jar 被正在运行的服务占着** → `repackage` 报 "Unable to rename"。
+   跑服务期间改代码必须先停进程（这条在 policy-desk 也踩过，属于 Windows 特有）。

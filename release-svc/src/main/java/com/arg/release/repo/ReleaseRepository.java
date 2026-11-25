@@ -37,6 +37,7 @@ public class ReleaseRepository {
             """;
 
     private final JdbcTemplate jdbc;
+    private final com.fasterxml.jackson.databind.ObjectMapper json;
     private final RowMapper<Release> mapper = (rs, i) -> new Release(
             rs.getLong("id"),
             rs.getString("env"),
@@ -50,8 +51,9 @@ public class ReleaseRepository {
             rs.getTimestamp("created_at").toLocalDateTime(),
             rs.getTimestamp("updated_at").toLocalDateTime());
 
-    public ReleaseRepository(JdbcTemplate jdbc) {
+    public ReleaseRepository(JdbcTemplate jdbc, com.fasterxml.jackson.databind.ObjectMapper json) {
         this.jdbc = jdbc;
+        this.json = json;
     }
 
     /** 建一条 PENDING 发布；`prev_release_id` 记录"发布前生效的那个"，供回滚用。 */
@@ -111,6 +113,15 @@ public class ReleaseRepository {
             throw new OptimisticLockException(id, expectedRev, now.rev());
         }
         pointTo(cur.env(), cur.promptKey(), id);
+        // ★ 同事务写 outbox：发布生效与"门禁该跑了"这件事必须一起成功或一起失败
+        String eventId = java.util.UUID.randomUUID().toString();
+        String payload = String.format(
+                "{\"releaseId\":%d,\"env\":\"%s\",\"promptKey\":\"%s\",\"version\":%d,\"rolloutPct\":%d}",
+                id, cur.env(), cur.promptKey(), cur.version(), rolloutPct);
+        jdbc.update("""
+                        INSERT INTO outbox_event (event_id, type, payload) VALUES (?, 'RELEASE_CANARY', ?)
+                        """,
+                eventId, payload);
         return findById(id).orElseThrow();
     }
 
@@ -214,3 +225,4 @@ public class ReleaseRepository {
         }
     }
 }
+
