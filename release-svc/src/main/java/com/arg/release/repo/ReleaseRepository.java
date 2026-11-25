@@ -102,7 +102,7 @@ public class ReleaseRepository {
         if (expectedRev != cur.rev()) {
             throw new OptimisticLockException(id, expectedRev, cur.rev());
         }
-        if (cur.state() != ReleaseState.PENDING) {
+        if (!cur.state().canGoTo(ReleaseState.CANARY)) {
             throw new IllegalStateException("只有 PENDING 的发布能开始灰度，当前是 " + cur.state());
         }
         int rows = jdbc.update("""

@@ -306,3 +306,30 @@ docker compose -f deploy/docker-compose.yml ps     # 六个容器应全 healthy
 `smoke_release.py` 第 8 步回滚"没有 prev 的发布"时，`/api/gray` 返回 404，body 是错误对象（没有 `releaseId`），
 脚本直接 `KeyError`。**这正是空库才走到的分支**——之前开发库里有历史数据，`prev` 一直非空，从没踩到。
 改成先看状态码、再用 `.get()` 取值。
+
+## 单元测试（2026-11-25 补）
+
+```bash
+mvn -B test                 # 16 条，秒级
+python scripts/mutate_tests.py   # 变异测试：把实现改坏，确认测试会红
+```
+
+| 模块 | 测试 | 条数 |
+|---|---|---|
+| release-svc | `StableHashTest`：跨语言固定向量、1000 次稳定、空租户落 0、0..99 边界、100 桶覆盖、百分比单调 | 6 |
+| release-svc | `ReleaseStateTest`：合法迁移、16 种组合逐个断言、终态、两个 helper 与迁移表同源 | 5 |
+| gate-svc | `GateJobRepositoryTest`（H2/MySQL 模式真 SQL）：重复事件只建 1 条、不同事件不误伤、回调只生效一次、markRunning 一次性、detail 截断 | 5 |
+
+**★ 变异测试（证明测试不是摆设）**：三次变异都按预期变红，还原后回绿。
+
+| 变异 | 结果 |
+|---|---|
+| 分桶 `Math.floorMod` → `%`（负数出界） | `StableHashTest` **3 条红** |
+| 状态机允许 `ROLLED_BACK → CANARY`（复活） | `ReleaseStateTest` **2 条红** |
+| `finish` 去掉 `AND passed IS NULL`（重复回调覆盖） | `GateJobRepositoryTest` **1 条红** |
+
+顺带做的一个重构：状态机判断原来散在三个方法里（`!= PENDING` / `!= CANARY` / `canRollback()`），
+收成 `ReleaseState.canGoTo(next)` —— 这样单测覆盖它就是覆盖三条路径，改一处不会漏两处。
+
+**为什么单测跑 H2 而不是 MySQL 容器**：这层 SQL 没用到 MySQL 特有语法；换 Testcontainers
+会让单测从秒级变成几十秒，**单测一慢就没人跑**。真正的 MySQL 行为由端到端判据兜住（投 100 次那条）。

@@ -41,6 +41,13 @@
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- 单测只在 H2（MySQL 兼容模式）上跑：这层 SQL 没用到 MySQL 特有语法，
+         换成 Testcontainers 会让单测从秒级变成几十秒，单测一慢就没人跑 -->
+    <dependency>
+      <groupId>com.h2database</groupId>
+      <artifactId>h2</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
@@ -52,3 +59,4 @@
     </plugins>
   </build>
 </project>
+
