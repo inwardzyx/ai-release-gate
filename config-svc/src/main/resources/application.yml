@@ -1,0 +1,36 @@
+server:
+  port: ${SERVER_PORT:8081}
+
+spring:
+  application:
+    name: config-svc
+
+  datasource:
+    # ★ 连 127.0.0.1:3307：这是本项目**自己的** MySQL 容器（deploy/），
+    #   不和 policy-desk 的 3306 混用——"每个服务自己的库"是本项目的卖点之一。
+    url: jdbc:mysql://${DB_HOST:127.0.0.1}:${DB_PORT:3307}/arg_config?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${DB_USER:arg}
+    password: ${DB_PASSWORD:arg_dev_2026}
+    hikari:
+      # 每个服务自己的连接池上限：4 个服务共用一个 MySQL，不设会被一起打满
+      maximum-pool-size: 10
+      minimum-idle: 2
+      pool-name: config-svc-pool
+
+  sql:
+    init:
+      # ★ always + CREATE TABLE IF NOT EXISTS：幂等，重启不会报错
+      mode: always
+      schema-locations: classpath:schema.sql
+      continue-on-error: false
+
+  jackson:
+    # 时间统一按 ISO-8601 输出，别让调用方猜时区
+    default-property-inclusion: non_null
+
+logging:
+  pattern:
+    # ★ 把 traceId 打进每行日志：跨进程排查靠它
+    level: "%5p [traceId=%X{traceId:-}]"
+  level:
+    com.arg: INFO

@@ -1,0 +1,17 @@
+# Maven
+target/
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# 日志与本地环境
+logs/
+*.log
+.env
+!.env.example
+
+# 实验中间产物（结论入库、中间物不入库）
+_*
